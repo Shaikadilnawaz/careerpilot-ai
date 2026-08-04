@@ -1,0 +1,55 @@
+rules_version = '2';
+
+// Firestore security rules — the REAL access control for your database.
+// The client SDK code (resume-service.ts) is just convenience; these rules run
+// on Google's servers and cannot be bypassed by a malicious client.
+//
+// Deploy: `firebase deploy --only firestore:rules`
+// (or paste into Firebase Console → Firestore Database → Rules → Publish)
+//
+// ⚠️ RULES ARE OR'd, NOT LAYERED.
+// If two match blocks match the same path, access is granted when EITHER one
+// allows it. A narrower rule can never take away what a broader rule grants.
+// That's why we do NOT use a recursive `/users/{userId}/{document=**}` wildcard
+// here: it would silently hand the client write access to `analyses`, and no
+// amount of `allow write: if false` further down would claw it back.
+// Every collection is therefore listed explicitly.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // The user's own profile document.
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Resumes: the browser uploads and deletes these directly, so it needs
+    // full access to its own.
+    match /users/{userId}/resumes/{resumeId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Analyses: WRITTEN ONLY BY THE SERVER.
+    // The analyze-resume Server Action writes these through the Admin SDK,
+    // which bypasses these rules entirely — so the client never needs create
+    // or update permission. Denying it means a tampered client cannot forge a
+    // perfect score or invent analysis history without a real (paid) AI call.
+    // Delete stays allowed: clearing your own history is the user's business.
+    match /users/{userId}/analyses/{analysisId} {
+      allow read, delete: if isOwner(userId);
+      allow create, update: if false;
+    }
+
+    // Applications tracker (Week 4) — client-managed, same owner check.
+    match /users/{userId}/applications/{applicationId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Anything not matched above is denied by default. Firestore has no
+    // implicit allow — silence means no.
+  }
+}
