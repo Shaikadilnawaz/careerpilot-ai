@@ -60,7 +60,7 @@ export function ResumeList() {
   return (
     <div className="flex flex-col gap-2">
       {resumes.map((resume) => (
-        <ResumeCard key={resume.id} resume={resume} uid={user!.uid} />
+        <ResumeCard key={resume.id} resume={resume} />
       ))}
     </div>
   )

@@ -1,27 +1,28 @@
 /**
- * Resume service — the ONLY module that talks to Firebase Storage + Firestore
- * for resumes. Components call these functions instead of importing Firebase
- * directly, exactly like auth-service does for Auth. One place for the data
- * logic = one place to change it.
+ * Resume service — the ONLY module that talks to Firestore for resumes.
+ *
+ * 📌 Notice what this file NO LONGER does: touch storage at all.
+ *
+ * In Week 2 it owned both halves (Firebase Storage + Firestore). Vercel Blob's
+ * only credential is a store-wide read-write token, which can never ship to the
+ * browser — so uploads now go browser → Blob directly (authorized by a Route
+ * Handler), and deletes go through a Server Action. What's left here is the
+ * Firestore half, unchanged.
+ *
+ * That the Firestore code survived a complete storage-vendor swap untouched is
+ * the clearest evidence the layering was worth it.
  */
-import {
-  ref,
-  uploadBytesResumable,
-  getDownloadURL,
-  deleteObject,
-} from "firebase/storage"
 import {
   collection,
   doc,
   setDoc,
-  deleteDoc,
   onSnapshot,
   query,
   orderBy,
   serverTimestamp,
 } from "firebase/firestore"
 
-import { db, storage, isFirebaseConfigured } from "@/lib/firebase/client"
+import { db, isFirebaseConfigured } from "@/lib/firebase/client"
 import type { NewResume, Resume } from "../schema"
 
 function assertConfigured() {
@@ -31,58 +32,27 @@ function assertConfigured() {
 }
 
 /**
- * Pre-generate the resume's id and Storage path in one place.
+ * Pre-generate the resume's id and blob pathname in one place.
  *
  * We create the Firestore doc ref FIRST (without writing anything) just to grab
- * its auto-generated id, then reuse that same id for the Storage file name. That
- * way the file and its metadata share one id — the `storagePath` pointer is
- * predictable and the two systems stay in lock-step.
+ * its auto-generated id, then reuse that same id in the blob pathname. The file
+ * and its metadata share one id, so the pointer is predictable and the two
+ * systems stay in lock-step.
+ *
+ * 📌 The `users/{uid}/` prefix is not decoration — the upload Route Handler
+ * refuses to mint a token for any path that doesn't start with the VERIFIED
+ * uid. The path is the ownership boundary.
  */
 export function newResumeRef(uid: string): {
   resumeId: string
-  storagePath: string
+  blobPathname: string
 } {
   assertConfigured()
   const resumeRef = doc(collection(db, "users", uid, "resumes"))
   return {
     resumeId: resumeRef.id,
-    storagePath: `users/${uid}/resumes/${resumeRef.id}.pdf`,
+    blobPathname: `users/${uid}/resumes/${resumeRef.id}.pdf`,
   }
-}
-
-/**
- * Upload the PDF bytes to Cloud Storage, reporting progress along the way.
- *
- * `uploadBytesResumable` returns an UploadTask that emits "state_changed" events
- * — that's how we get a live percentage for the progress bar. We wrap the
- * event-based API in a Promise so callers can simply `await` it.
- */
-export function uploadResumeFile(
-  storagePath: string,
-  file: File,
-  onProgress: (percent: number) => void
-): Promise<string> {
-  assertConfigured()
-  return new Promise((resolve, reject) => {
-    const task = uploadBytesResumable(ref(storage, storagePath), file, {
-      contentType: file.type,
-    })
-    task.on(
-      "state_changed",
-      (snapshot) => {
-        const percent = Math.round(
-          (snapshot.bytesTransferred / snapshot.totalBytes) * 100
-        )
-        onProgress(percent)
-      },
-      (error) => reject(error),
-      async () => {
-        // Upload finished — hand back a URL the browser can preview/download.
-        const downloadURL = await getDownloadURL(task.snapshot.ref)
-        resolve(downloadURL)
-      }
-    )
-  })
 }
 
 /**
@@ -134,21 +104,4 @@ export function subscribeToResumes(
     },
     onError
   )
-}
-
-/**
- * Delete a resume from BOTH systems. Forgetting either half leaves an orphan:
- * a metadata row pointing at a missing file, or a file no UI can reach. We
- * remove the Storage file first, then the Firestore doc — and if the file is
- * already gone we still clean up the metadata rather than getting stuck.
- */
-export async function deleteResume(uid: string, resume: Resume): Promise<void> {
-  assertConfigured()
-  try {
-    await deleteObject(ref(storage, resume.storagePath))
-  } catch (error) {
-    const code = (error as { code?: string }).code
-    if (code !== "storage/object-not-found") throw error
-  }
-  await deleteDoc(doc(db, "users", uid, "resumes", resume.id))
 }

@@ -49,9 +49,14 @@ line of code, and a 4-question quiz before implementation.
 17. Fixed `react-hooks/set-state-in-effect` in the new form **and** in Week 1's
     `auth-context.tsx`. `tsc` and `eslint` both clean.
 
-**Still outstanding at the end of Week 3:** Firestore rules not yet deployed,
-Cloud Storage not enabled (so no real upload has succeeded yet), and therefore
-no in-browser end-to-end run. The AI pipeline itself is verified by smoke test.
+**Closed out after the notes were first written:**
+
+18. **Deployed the Firestore rules** with `firebase deploy --only firestore:rules`
+    — this, not storage, was what caused `Missing or insufficient permissions`.
+19. **Seeded a resume document** via the Admin SDK so the analyzer could be
+    tested before file storage existed (it only ever reads `extractedText`).
+20. **Replaced Firebase Storage with Vercel Blob** — Firebase Storage now
+    requires the paid Blaze plan. See §14 for the full migration.
 
 ---
 
@@ -416,7 +421,100 @@ no in-browser end-to-end run. The AI pipeline itself is verified by smoke test.
   with the new env, and your browser stays on the stale **3000**. **Check the
   port in the startup banner** when a restart "doesn't take".
 
-## 14. 🎤 Interview questions you should be able to answer
+## 14. Addendum — migrating file storage to Vercel Blob ⭐
+
+**Why we moved:** Firebase Cloud Storage now requires the **Blaze (paid) plan**
+on new projects. Rather than attach a card for one feature, we compared
+alternatives and chose **Vercel Blob** (Hobby: 1 GB, 10 GB transfer, no card).
+
+**Why Vercel Blob over Supabase Storage** — both are free and cardless, but:
+- ⚠️ Supabase **pauses free projects after 7 days of inactivity** (20–30 s wake).
+  For a portfolio project whose job is to work when a recruiter clicks the link
+  weeks later, that's disqualifying. Vercel Blob never pauses.
+- It's the **same platform we deploy to**, so the token is injected
+  automatically and there's no third vendor or auth bridge.
+- ⚠️ Trade-off accepted: Vercel Hobby is **non-commercial only**. Fine for a
+  portfolio; would need Pro if CareerPilot were ever monetised.
+
+### The credential model forced the architecture ⭐
+
+- Firebase Storage had a **per-user client SDK** — the browser authenticated as
+  the signed-in user and Storage *rules* enforced ownership.
+- Vercel Blob has **one store-wide read-write token**. Ship it to the browser
+  and every user can read and delete everyone's files.
+- ⚠️ So authority moved server-side: the server holds the credential, verifies
+  identity, checks ownership, and acts on the user's behalf — the same model we
+  already used for `analyses`.
+- **The lesson to say out loud:** when a vendor's credential model changes,
+  your trust boundaries move with it. This is not an SDK detail.
+
+### Client-direct upload (presigned pattern) ⭐
+
+- ⚠️ **You cannot route the file through a Server Action** — bodies are capped
+  at **1 MB** and resumes are allowed up to 5 MB.
+- Flow: browser asks our server → server verifies the Firebase ID token and
+  returns a **scoped, short-lived upload token** → browser PUTs the bytes
+  **directly** to blob storage. Our server never touches the file.
+- This is the same pattern as **S3 presigned POST** and **GCS signed URLs** —
+  vendor-agnostic knowledge that transfers to any cloud job.
+- **The ownership check is the path**: the handler refuses to mint a token
+  unless `pathname` starts with `users/{verified_uid}/resumes/`. The client
+  picks its own path, so without that line anyone could get a token for someone
+  else's folder.
+- `allowedContentTypes` and `maximumSizeInBytes` are baked **into the token**,
+  so Vercel enforces them. Client-side Zod is UX; this is the boundary.
+
+### Route Handler vs Server Action ⭐ (great interview contrast)
+
+- **Server Actions**: *our* code calling *our* function with typed arguments.
+- **Route Handlers**: when **something else defines the protocol** — a
+  third-party SDK, a webhook, an OAuth callback. `@vercel/blob/client` posts its
+  own request shape and expects its own response shape, so `handleUpload` lives
+  in a Route Handler.
+- ⚠️ `onUploadCompleted` **never fires on localhost** — Vercel's servers call it
+  and can't reach your laptop. So the Firestore write stays on the client.
+  Logic that only runs in production is how you ship code that works on your
+  machine and nowhere else.
+
+### Private blobs + signed URLs (PII) ⭐
+
+- Week 2 stored a **long-lived public `downloadURL`** — forward it once and
+  anyone could read that resume forever.
+- Resumes are **PII** (name, email, phone, employment history), so the store is
+  **private** and we mint a **5-minute signed URL** per request, only after
+  verifying the caller owns that resume.
+- Two-step API: `issueSignedToken` (delegation scoped to one pathname + the
+  `get` operation) → `presignUrl` (turns it into a URL). Returns
+  `{ presignedUrl }`, not `{ url }`.
+- **Verified by test**: fetching the raw blob URL with no credentials returns
+  **403**; the signed URL returns **200**.
+- A signed URL is a **bearer credential** — short TTL keeps the blast radius
+  small. The user just clicks again.
+
+### Practical gotchas
+
+- ⚠️ **Popup blockers**: browsers only allow `window.open()` during the
+  *synchronous* part of a click handler. Opening after an `await` gets blocked.
+  Fix: open a blank tab immediately, then set `tab.location.href` once the
+  signed URL arrives.
+- **Delete order**: blob first, then the Firestore doc. Reverse it and a failure
+  orphans the file forever — nothing points at it, and it silently eats quota.
+- Treat `BlobNotFoundError` on delete as success: the goal is "the file is
+  gone", and it is.
+- ⚠️ **Hydration errors from browser extensions**: `fdprocessedid` is injected
+  by form-filler extensions, not by your code. If the mismatched attribute
+  isn't in your source, it came from outside — check in incognito before
+  refactoring working code.
+
+### What survived the migration untouched
+
+- **The pointer pattern** — Firestore still holds small queryable metadata plus
+  an address for the binary. Only the destination changed.
+- **The entire Firestore half of `resume-service.ts`.** A complete
+  storage-vendor swap touched zero lines of it. That is the clearest possible
+  evidence the layering was worth building.
+
+## 15. 🎤 Interview questions you should be able to answer
 
 1. **I'm logged in and the button only renders on a protected page — why isn't
    that enough?** → `"use server"` generates a public POST endpoint; the action
@@ -455,6 +553,20 @@ no in-browser end-to-end run. The AI pipeline itself is verified by smoke test.
 14. **What happens if the model returns invalid JSON?** → `generateObject`
     throws `NoObjectGeneratedError`; we catch it specifically and tell the user
     to retry.
+15. **Why can't the browser upload straight to your blob store?** → The only
+    credential is a store-wide read-write token; shipping it would let any user
+    read and delete everyone's files. The server mints a scoped, short-lived
+    token after verifying the ID token.
+16. **Why is the upload endpoint a Route Handler and not a Server Action?** →
+    Server Action bodies cap at 1 MB (resumes go to 5 MB), and the blob SDK
+    defines its own request/response protocol. Route Handlers are for when
+    something else owns the protocol.
+17. **How do you serve private files?** → Private store plus short-lived signed
+    URLs minted server-side after an ownership check — never a long-lived public
+    URL, because a resume is PII and a forwarded link would live forever.
+18. **You swapped storage vendors mid-project — what broke?** → Nothing in the
+    Firestore layer. The service boundary meant the change was contained to the
+    storage half plus one new Route Handler.
 
 ---
 
@@ -476,3 +588,8 @@ no in-browser end-to-end run. The AI pipeline itself is verified by smoke test.
 | `firestore.rules` | Rewritten: explicit collections, `analyses` client-read-only |
 | `firebase.json` / `.firebaserc` | Rules deploy from the CLI (infra as code) |
 | `src/lib/ai/client.ts` | Model migrated 2.0-flash → 3.6-flash, pinned |
+| `src/lib/blob/client.ts` | The one file naming the storage vendor; signs preview URLs, deletes blobs |
+| `src/app/api/resumes/upload/route.ts` | Route Handler issuing scoped upload tokens |
+| `src/features/resumes/actions/resume-actions.ts` | Signed preview URL + delete, both ownership-checked |
+| `src/features/resumes/services/resume-service.ts` | Storage code removed; Firestore half unchanged |
+| `storage.rules` | **Deleted** — replaced by server-side checks |

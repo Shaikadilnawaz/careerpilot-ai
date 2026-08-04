@@ -4,8 +4,8 @@
  * ResumeCard — one row in the resume list.
  *
  * Shows the metadata we pulled from Firestore (name, size, date, status) and two
- * actions: Preview (opens the Storage download URL — browsers render PDFs
- * natively) and Delete (a deliberate two-click confirm so a stray click can't
+ * actions: Preview (mints a short-lived signed URL, since the blob store is
+ * private) and Delete (a deliberate two-click confirm so a stray click can't
  * wipe a file).
  */
 import * as React from "react"
@@ -14,23 +14,67 @@ import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { useAuth } from "@/features/auth/auth-context"
 import type { Resume } from "../schema"
 import { formatBytes, formatUploadedAt } from "../format"
-import { deleteResume } from "../services/resume-service"
+import {
+  deleteResumeAction,
+  getResumePreviewUrl,
+} from "../actions/resume-actions"
 
-export function ResumeCard({ resume, uid }: { resume: Resume; uid: string }) {
+export function ResumeCard({ resume }: { resume: Resume }) {
+  const { user } = useAuth()
   const [confirming, setConfirming] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
+  const [opening, setOpening] = React.useState(false)
+
+  /**
+   * Preview is no longer a plain link. The store is private, so there is no
+   * URL that just works — we ask the server to verify we own this resume and
+   * mint a 5-minute signed URL.
+   *
+   * 📌 The popup-blocker trap: browsers only allow window.open() during the
+   * synchronous part of a click handler. Opening it AFTER an await looks like
+   * an unprompted popup and gets blocked. So we open a blank tab immediately,
+   * then point it at the URL once it arrives.
+   */
+  async function handlePreview() {
+    if (!user) return
+    const tab = window.open("", "_blank", "noopener,noreferrer")
+    setOpening(true)
+    try {
+      const idToken = await user.getIdToken()
+      const result = await getResumePreviewUrl({ idToken, resumeId: resume.id })
+      if (!result.ok) {
+        tab?.close()
+        toast.error(result.error)
+        return
+      }
+      if (tab) tab.location.href = result.url
+      else toast.error("Please allow pop-ups to preview your resume.")
+    } catch (error) {
+      tab?.close()
+      console.error(error)
+      toast.error("Could not open this resume.")
+    } finally {
+      setOpening(false)
+    }
+  }
 
   async function handleDelete() {
+    if (!user) return
     setDeleting(true)
     try {
-      await deleteResume(uid, resume)
+      const idToken = await user.getIdToken()
+      const result = await deleteResumeAction({ idToken, resumeId: resume.id })
+      if (!result.ok) throw new Error(result.error)
       toast.success(`${resume.fileName} deleted.`)
       // No manual list update needed — onSnapshot removes it for us.
     } catch (error) {
       console.error(error)
-      toast.error("Could not delete this resume.")
+      toast.error(
+        error instanceof Error ? error.message : "Could not delete this resume."
+      )
       setDeleting(false)
       setConfirming(false)
     }
@@ -83,15 +127,11 @@ export function ResumeCard({ resume, uid }: { resume: Resume; uid: string }) {
           <Button
             variant="outline"
             size="sm"
-            render={
-              <a
-                href={resume.downloadURL}
-                target="_blank"
-                rel="noopener noreferrer"
-              />
-            }
+            onClick={handlePreview}
+            disabled={opening}
           >
-            <ExternalLink /> Preview
+            {opening ? <Loader2 className="animate-spin" /> : <ExternalLink />}
+            Preview
           </Button>
           <Button
             variant="ghost"

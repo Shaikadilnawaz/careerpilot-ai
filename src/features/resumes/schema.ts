@@ -47,10 +47,25 @@ export interface Resume {
   fileName: string
   sizeBytes: number
   contentType: string
-  /** The pointer: where the real file lives inside Cloud Storage. */
-  storagePath: string
-  /** Long-lived URL for previewing/downloading the PDF in the browser. */
-  downloadURL: string
+  /**
+   * The pointer: where the real file lives inside the blob store.
+   *
+   * 📌 The pointer pattern from Week 2 is unchanged — Firestore still holds
+   * small queryable metadata plus an address for the binary. Only the
+   * DESTINATION moved (Firebase Storage → Vercel Blob). Swapping a vendor
+   * without changing the architecture is the whole point of having a boundary.
+   */
+  blobPathname: string
+  /**
+   * The blob's canonical URL. NOT directly viewable — the store is private, so
+   * fetching this without credentials returns 403. It's what we pass to the
+   * delete API, and what we sign on demand to produce a preview link.
+   *
+   * 📌 Contrast with Week 2's `downloadURL`, which was a long-lived public URL:
+   * anyone it was forwarded to could read the resume forever. Resumes are PII,
+   * so we now mint a 5-minute signed URL per request instead of storing one.
+   */
+  blobUrl: string
   /** Extracted plain text — feeds Week 3's AI analyzer. */
   extractedText: string
   status: ResumeStatus

@@ -7,22 +7,27 @@
  * drop events, and the browser File API — none of which exist on the server.
  *
  * Flow when a file is chosen:
- *   validate (Zod) → upload to Storage (progress) → extract text (Server Action)
- *   → save one Firestore metadata doc. The live list updates itself via its own
- *   onSnapshot listener, so we don't touch it here.
+ *   validate (Zod) → ask our server to authorize an upload → send the bytes
+ *   straight to Vercel Blob → extract text (Server Action) → save one Firestore
+ *   metadata doc. The live list updates itself via its own onSnapshot listener,
+ *   so we don't touch it here.
+ *
+ * 📌 The bytes never pass through our server. `upload()` first POSTs to
+ * /api/resumes/upload, which verifies the Firebase ID token and returns a token
+ * scoped to one path, one content type, and one size limit; the browser then
+ * PUTs the file directly to blob storage. This is the same presigned-upload
+ * pattern used by S3 and GCS, and it's what keeps us under the 1 MB cap on
+ * Server Action request bodies.
  */
 import * as React from "react"
 import { UploadCloud, Loader2, FileText } from "lucide-react"
 import { toast } from "sonner"
+import { upload } from "@vercel/blob/client"
 
 import { useAuth } from "@/features/auth/auth-context"
 import { cn } from "@/lib/utils"
 import { resumeFileSchema } from "../schema"
-import {
-  newResumeRef,
-  uploadResumeFile,
-  saveResume,
-} from "../services/resume-service"
+import { newResumeRef, saveResume } from "../services/resume-service"
 import { extractResumeText } from "../actions/extract-text"
 
 type Phase = "idle" | "uploading" | "processing"
@@ -50,13 +55,25 @@ export function ResumeUploader() {
     }
 
     try {
-      // 2. Reserve an id + storage path so the file and its metadata share one id.
-      const { resumeId, storagePath } = newResumeRef(user.uid)
+      // 2. Reserve an id + blob pathname so the file and its metadata share one id.
+      const { resumeId, blobPathname } = newResumeRef(user.uid)
 
-      // 3. Upload the bytes to Storage, streaming progress into the bar.
+      // 3. Upload the bytes DIRECTLY to blob storage.
       setPhase("uploading")
       setProgress(0)
-      const downloadURL = await uploadResumeFile(storagePath, file, setProgress)
+
+      // Fetched fresh each time; Firebase auto-refreshes it near expiry. This
+      // is the only thing proving to our Route Handler who is uploading.
+      const idToken = await user.getIdToken()
+
+      const blob = await upload(blobPathname, file, {
+        access: "private",
+        contentType: file.type,
+        // Our Route Handler — it authorizes before any token is minted.
+        handleUploadUrl: "/api/resumes/upload",
+        clientPayload: JSON.stringify({ idToken }),
+        onUploadProgress: ({ percentage }) => setProgress(Math.round(percentage)),
+      })
 
       // 4. Extract text on the server. We ship the File via FormData.
       setPhase("processing")
@@ -73,8 +90,10 @@ export function ResumeUploader() {
         fileName: file.name,
         sizeBytes: file.size,
         contentType: file.type,
-        storagePath,
-        downloadURL,
+        blobPathname,
+        // Private URL — not viewable on its own. Stored so we can sign it for
+        // previews and hand it to the delete API later.
+        blobUrl: blob.url,
         extractedText,
         status,
       })
