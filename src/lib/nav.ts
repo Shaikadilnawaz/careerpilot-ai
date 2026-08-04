@@ -18,6 +18,8 @@ export type NavItem = {
 export const navItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Resumes", href: "/resumes", icon: FileText },
+  // Analyze + tailor live on ONE route: they need the same two inputs, and
+  // splitting them meant pasting the same job description twice.
   { label: "Analyze", href: "/analyze", icon: Sparkles },
   { label: "Applications", href: "/applications", icon: Briefcase },
 ]

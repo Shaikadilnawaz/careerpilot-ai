@@ -14,8 +14,8 @@ export default function AnalyzePage() {
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Analyze</h1>
         <p className="text-muted-foreground text-sm">
-          Score a resume for ATS compatibility, and match it against a specific
-          job description.
+          Score a resume for ATS compatibility, match it against a job
+          description, then rewrite it for that role and download a clean PDF.
         </p>
       </div>
 

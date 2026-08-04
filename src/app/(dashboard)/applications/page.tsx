@@ -1,10 +1,14 @@
 import type { Metadata } from "next"
-import { Briefcase } from "lucide-react"
+
+import { ApplicationForm } from "@/features/applications/components/application-form"
+import { ApplicationList } from "@/features/applications/components/application-list"
 
 export const metadata: Metadata = {
   title: "Applications · CareerPilot AI",
 }
 
+// Server Component: static layout only. The form and the live list are Client
+// Components nested inside, so only their JS ships to the browser.
 export default function ApplicationsPage() {
   return (
     <div className="flex flex-col gap-6">
@@ -14,10 +18,9 @@ export default function ApplicationsPage() {
           Track every application from wishlist to offer.
         </p>
       </div>
-      <div className="text-muted-foreground flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed py-20 text-center">
-        <Briefcase className="size-8" />
-        <p className="text-sm">The application tracker arrives in Week 4.</p>
-      </div>
+
+      <ApplicationForm />
+      <ApplicationList />
     </div>
   )
 }
