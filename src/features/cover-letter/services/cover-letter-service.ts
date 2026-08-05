@@ -21,8 +21,32 @@ export const COVER_LETTER_MODEL = "gemini-3.6-flash"
 
 export interface CoverLetterRun {
   text: string
-  usage: { inputTokens: number; outputTokens: number }
+  /**
+   * Why the model stopped. "stop" = it finished the letter. "length" = it hit
+   * the token ceiling mid-word. The caller MUST check this — see below.
+   */
+  finishReason: string
+  usage: { inputTokens: number; outputTokens: number; reasoningTokens: number }
 }
+
+/**
+ * 📌 THE NUMBER THAT BIT US. This is NOT "how long may the letter be".
+ *
+ * Gemini 3.x is a THINKING model: it reasons before it answers, and those
+ * reasoning tokens are spent from this same budget. A measured run:
+ *
+ *     outputTokens 1173  =  textTokens 271  +  reasoningTokens 902
+ *
+ * The letter needed ~270 tokens. The model spent ~900 thinking first. At the
+ * original ceiling of 1200 it finished with 27 tokens to spare on a short
+ * resume — and ran straight off the end on a real one, emitting a letter that
+ * stopped mid-sentence.
+ *
+ * So the budget must cover REASONING + OUTPUT, and reasoning is the bigger and
+ * far less predictable half. Length is controlled by the prompt ("under 300
+ * words"), never by starving the ceiling.
+ */
+const MAX_OUTPUT_TOKENS = 4096
 
 /**
  * 📌 temperature 0.7 — the highest in this project, and the third distinct
@@ -41,21 +65,25 @@ export async function runCoverLetter(
   company: string,
   role: string
 ): Promise<CoverLetterRun> {
-  const { text, usage } = await generateText({
+  const { text, usage, finishReason } = await generateText({
     model: aiModel,
     system: COVER_LETTER_SYSTEM_PROMPT,
     prompt: buildCoverLetterPrompt(resumeText, jobDescription, company, role),
     temperature: 0.7,
-    // A letter is short. Capping low also discourages rambling — the model
-    // tends to fill the space it's given.
-    maxOutputTokens: 1200,
+    maxOutputTokens: MAX_OUTPUT_TOKENS,
   })
 
   return {
     text: text.trim(),
+    finishReason,
     usage: {
       inputTokens: usage.inputTokens ?? 0,
       outputTokens: usage.outputTokens ?? 0,
+      // Nested under outputTokenDetails, not on usage directly — reasoning is a
+      // BREAKDOWN of outputTokens, not an extra category beside it. Worth
+      // logging separately because it's the half that actually moves, and the
+      // half you cannot see by looking at the letter.
+      reasoningTokens: usage.outputTokenDetails?.reasoningTokens ?? 0,
     },
   }
 }

@@ -61,12 +61,37 @@ export async function writeCoverLetter(input: {
       }
     }
 
-    const { text } = await runCoverLetter(
+    const { text, finishReason } = await runCoverLetter(
       resume.extractedText,
       jobDescription,
       company,
       role
     )
+
+    /**
+     * 📌 THE CHECK THAT WAS MISSING, AND THE BUG IT LET THROUGH.
+     *
+     * A letter came back cut off mid-sentence — "My background in Computer
+     * Science, combined with" — and every guard below waved it through, because
+     * a truncated letter is not an error. It is just a shorter string.
+     *
+     * `finishReason` is the only thing that tells them apart:
+     *   "stop"   → the model finished what it wanted to say
+     *   "length" → it ran out of budget mid-word
+     *
+     * This is the price of `generateText`. `generateObject` gets truncation
+     * detection for free: a half-written JSON object fails to parse and throws
+     * NoObjectGeneratedError. Free text has no such tell — so we check it
+     * ourselves, and we check it FIRST, because a truncated letter can easily
+     * be long enough to satisfy the length guard below.
+     */
+    if (finishReason === "length") {
+      return {
+        ok: false,
+        error:
+          "The letter got cut off before it finished. Please try again — if it keeps happening, shorten the job description.",
+      }
+    }
 
     if (text.length < MIN_LETTER_CHARS) {
       return {
