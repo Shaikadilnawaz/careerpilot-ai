@@ -29,11 +29,13 @@ import {
   Wand2,
   ChevronDown,
   RefreshCw,
+  Mail,
 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
@@ -46,13 +48,16 @@ import { tailorResume } from "@/features/tailor/actions/tailor-resume"
 import { recheckDraft } from "@/features/tailor/actions/recheck-draft"
 import { TailoredResumeEditor } from "@/features/tailor/components/tailored-resume-editor"
 import type { TailoredResume } from "@/features/tailor/schema"
+import { writeCoverLetter } from "@/features/cover-letter/actions/write-cover-letter"
+import { CoverLetterEditor } from "@/features/cover-letter/components/cover-letter-editor"
+import type { CoverLetterHeader } from "@/features/cover-letter/schema"
 
 import { analyzeResume } from "../actions/analyze-resume"
 import { MAX_JD_CHARS, type AnalysisResult as Result } from "../schema"
 import { AnalysisResult } from "./analysis-result"
 
 /** Which long-running job is in flight. One transition, one label for it. */
-type Task = "analyze" | "tailor" | "recheck" | null
+type Task = "analyze" | "tailor" | "recheck" | "letter" | null
 
 const STAGES: Record<Exclude<Task, null>, string[]> = {
   analyze: [
@@ -68,6 +73,11 @@ const STAGES: Record<Exclude<Task, null>, string[]> = {
     "Choosing the strongest wording…",
   ],
   recheck: ["Re-scoring your edited draft…"],
+  letter: [
+    "Reading your resume…",
+    "Finding your strongest match…",
+    "Writing your letter…",
+  ],
 }
 
 export function AnalyzeForm() {
@@ -80,6 +90,18 @@ export function AnalyzeForm() {
   const [result, setResult] = React.useState<Result | null>(null)
   const [draft, setDraft] = React.useState<TailoredResume | null>(null)
   const [recheck, setRecheck] = React.useState<Result | null>(null)
+
+  // Cover letter: company and role are typed by the user rather than extracted
+  // from the job description — extraction is flaky and typing takes seconds.
+  const [company, setCompany] = React.useState("")
+  const [role, setRole] = React.useState("")
+  const [letter, setLetter] = React.useState<string | null>(null)
+  const [letterHeader, setLetterHeader] = React.useState<CoverLetterHeader>({
+    fullName: "",
+    contact: "",
+    company: "",
+    role: "",
+  })
 
   const [task, setTask] = React.useState<Task>(null)
   const [stage, setStage] = React.useState(0)
@@ -156,6 +178,32 @@ export function AnalyzeForm() {
     })
   }
 
+  function handleCoverLetter() {
+    run("letter", async (idToken) => {
+      const response = await writeCoverLetter({
+        idToken,
+        resumeId: selectedId,
+        jobDescription: jobDescription.trim(),
+        company: company.trim(),
+        role: role.trim(),
+      })
+      if (!response.ok) return void toast.error(response.error)
+
+      setLetter(response.text)
+      // Prefill the letterhead from the tailored draft when we have one — the
+      // user already corrected their name and contact line there, so asking
+      // again would be re-work.
+      setLetterHeader({
+        fullName: draft?.fullName ?? "",
+        contact: draft?.contact ?? "",
+        company: company.trim(),
+        role: role.trim(),
+      })
+      setInputsOpen(false)
+      toast.success("Cover letter drafted — read it before sending.")
+    })
+  }
+
   function handleRecheck() {
     if (!draft) return
     run("recheck", async (idToken) => {
@@ -185,6 +233,8 @@ export function AnalyzeForm() {
   const overLimit = jobDescription.length > MAX_JD_CHARS
   // Tailoring needs a job description; a general ATS review does not.
   const canTailor = Boolean(selectedId) && jdText.length >= 50 && !overLimit
+  // A letter also needs to know who it's addressed to.
+  const canWriteLetter = canTailor && company.trim().length > 0 && role.trim().length > 0
   const selectedResume = resumes.find((r) => r.id === selectedId)
 
   return (
@@ -269,6 +319,43 @@ export function AnalyzeForm() {
                   className="min-h-32"
                 />
               </div>
+
+              {/* Only the cover letter needs these, so they're labelled as
+                  optional rather than gating the other two actions. */}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="company">
+                    Company{" "}
+                    <span className="text-muted-foreground font-normal">
+                      (for the cover letter)
+                    </span>
+                  </Label>
+                  <Input
+                    id="company"
+                    value={company}
+                    onChange={(e) => setCompany(e.target.value)}
+                    disabled={isPending}
+                    placeholder="Acme Inc."
+                    className="h-9"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="role">
+                    Role title{" "}
+                    <span className="text-muted-foreground font-normal">
+                      (for the cover letter)
+                    </span>
+                  </Label>
+                  <Input
+                    id="role"
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    disabled={isPending}
+                    placeholder="Frontend Engineer"
+                    className="h-9"
+                  />
+                </div>
+              </div>
             </>
           )}
 
@@ -300,6 +387,24 @@ export function AnalyzeForm() {
                 <Wand2 className="size-4" />
               )}
               Tailor my resume
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={handleCoverLetter}
+              disabled={isPending || !canWriteLetter}
+              title={
+                canWriteLetter
+                  ? undefined
+                  : "Add a job description, company, and role title to write a cover letter"
+              }
+            >
+              {isPending && task === "letter" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Mail className="size-4" />
+              )}
+              Cover letter
             </Button>
 
             {isPending && task && (
@@ -364,6 +469,21 @@ export function AnalyzeForm() {
               <AnalysisResult result={recheck} />
             </div>
           )}
+        </>
+      )}
+
+      {letter !== null && (
+        <>
+          <Separator />
+          <div className="flex flex-col gap-2">
+            <h2 className="text-sm font-medium">Cover letter</h2>
+            <CoverLetterEditor
+              header={letterHeader}
+              onHeaderChange={setLetterHeader}
+              body={letter}
+              onBodyChange={setLetter}
+            />
+          </div>
         </>
       )}
     </div>
