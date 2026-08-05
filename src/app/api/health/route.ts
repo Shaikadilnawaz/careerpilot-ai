@@ -55,6 +55,33 @@ function redact(error: unknown): string {
     .slice(0, 300)
 }
 
+/**
+ * Pull package names out of any node_modules paths in the error.
+ *
+ * 📌 Added because the blanket redaction above was destroying the one thing I
+ * actually needed. A dependency's NAME is not a secret — it's in package.json,
+ * which is public on GitHub. Redacting it bought no safety and cost four wrong
+ * hypotheses. Redact by what a value IS, not by what it superficially matches.
+ */
+function packagesInError(error: unknown): string[] {
+  const message = error instanceof Error ? error.message : String(error)
+  const found = new Set<string>()
+  for (const m of message.matchAll(/node_modules[/\\]((?:@[^/\\]+[/\\])?[^/\\]+)/g)) {
+    found.add(m[1].replace(/\\/g, "/"))
+  }
+  return [...found]
+}
+
+/** The file basenames mentioned, e.g. "index.js" — also not secret. */
+function filesInError(error: unknown): string[] {
+  const message = error instanceof Error ? error.message : String(error)
+  const found = new Set<string>()
+  for (const m of message.matchAll(/([A-Za-z0-9._-]+\.(?:js|mjs|cjs|json))/g)) {
+    found.add(m[1])
+  }
+  return [...found]
+}
+
 export async function GET() {
   const key = process.env.FIREBASE_ADMIN_PRIVATE_KEY
   const stripped = key?.trim().replace(/^['"]|['"]$/g, "")
@@ -86,6 +113,9 @@ export async function GET() {
   let adminInit = "ok"
   let reason: string | undefined
   let detail: string | undefined
+  let packages: string[] = []
+  let files: string[] = []
+  let errorCode: string | undefined
   try {
     const { adminAuth } = await import("@/lib/firebase/admin")
     // Touch it so a lazily-thrown credential error surfaces now.
@@ -94,6 +124,9 @@ export async function GET() {
     adminInit = "failed"
     reason = classify(error)
     detail = redact(error)
+    packages = packagesInError(error)
+    files = filesInError(error)
+    errorCode = (error as { code?: string }).code ?? undefined
   }
 
   // Which service account the credentials CLAIM to be. The local part of an
@@ -134,6 +167,9 @@ export async function GET() {
     identity,
     adminInit,
     reason,
+    errorCode,
+    packages,
+    files,
     detail,
   })
 }
