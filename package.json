@@ -2,6 +2,10 @@
   "name": "careerpilot-ai",
   "version": "0.1.0",
   "private": true,
+  "//engines": "Node 22.12+ is REQUIRED, not a preference. firebase-admin is on Next's default serverExternalPackages list, so it is require()d at runtime rather than bundled - and part of its dependency tree is ESM-only. require() of an ES module was only unflagged in Node 22.12. On Node 20 it throws ERR_REQUIRE_ESM at module load, which takes down every route and Server Action that imports the Admin SDK. Without this field the host picks its own default and the app works locally but 500s in production.",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
