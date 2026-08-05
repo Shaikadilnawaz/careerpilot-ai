@@ -107,5 +107,33 @@ export async function GET() {
     clientEmailDomain: clientEmail.split("@")[1] ?? "",
   }
 
-  return NextResponse.json({ env, keyShape, identity, adminInit, reason, detail })
+  /**
+   * 📌 The runtime facts. Added after three wrong hypotheses: the ERR_REQUIRE_ESM
+   * failure points at Node's module system, and `require()` of an ES module was
+   * only unflagged in Node 22.12 — so the actual version is the single most
+   * decisive fact available, and I had been assuming it instead of reading it.
+   */
+  const runtimeInfo = {
+    node: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    // Anything below 22.12 cannot require() an ES module.
+    supportsRequireEsm: (() => {
+      const [major, minor] = process.version
+        .replace(/^v/, "")
+        .split(".")
+        .map(Number)
+      return major > 22 || (major === 22 && minor >= 12)
+    })(),
+  }
+
+  return NextResponse.json({
+    runtimeInfo,
+    env,
+    keyShape,
+    identity,
+    adminInit,
+    reason,
+    detail,
+  })
 }
