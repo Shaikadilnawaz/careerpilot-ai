@@ -17,8 +17,8 @@ export default function ResumesPage() {
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Resumes</h1>
         <p className="text-muted-foreground text-sm">
-          Upload, store, and preview your resumes. We&apos;ll analyze them in
-          Week 3.
+          Upload, store, and preview your resumes. Head to Analyze to score one
+          against a job description.
         </p>
       </div>
 

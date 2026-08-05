@@ -40,7 +40,24 @@ export function ResumeCard({ resume }: { resume: Resume }) {
    */
   async function handlePreview() {
     if (!user) return
-    const tab = window.open("", "_blank", "noopener,noreferrer")
+
+    /**
+     * 📌 Do NOT pass "noopener" here.
+     *
+     * Per the HTML spec, window.open() returns null whenever noopener is
+     * specified — the whole point of the flag is to sever the link between the
+     * windows, so there is deliberately no handle to hand back. The original
+     * code passed "noopener,noreferrer", so `tab` was always null and the
+     * "please allow pop-ups" branch fired every single time, even though the
+     * tab had opened fine.
+     *
+     * Setting `tab.opener = null` after the fact gives us both things we want:
+     * a reference we can point at the signed URL, and no opener relationship
+     * for the new tab to reach back through.
+     */
+    const tab = window.open("", "_blank")
+    if (tab) tab.opener = null
+
     setOpening(true)
     try {
       const idToken = await user.getIdToken()
