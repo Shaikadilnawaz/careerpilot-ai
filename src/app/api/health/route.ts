@@ -24,10 +24,35 @@ function classify(error: unknown): string {
   if (/missing or malformed/i.test(message)) return "our-guard-rejected-the-key"
   if (/Failed to parse private key|DECODER|asn1|PEM/i.test(message))
     return "private-key-unparseable"
+  // The key parses fine but Google refuses it — almost always a REVOKED key
+  // (deleted in the console after a rotation) or one belonging to a different
+  // service account than the client_email claims.
+  if (/invalid_grant|Invalid JWT Signature|invalid_client|account not found/i.test(message))
+    return "key-parses-but-google-rejects-it (revoked or mismatched service account)"
+  if (/PERMISSION_DENIED|insufficient|IAM/i.test(message))
+    return "service-account-lacks-permission"
   if (/client_email|clientEmail/i.test(message)) return "client-email-invalid"
   if (/project_id|projectId/i.test(message)) return "project-id-invalid"
+  if (/ENOTFOUND|ETIMEDOUT|network|fetch failed/i.test(message))
+    return "network-error-reaching-google"
   if (/credential/i.test(message)) return "credential-rejected"
-  return "unknown-see-platform-logs"
+  return "unclassified"
+}
+
+/**
+ * Aggressively redact anything that could be key material, then truncate.
+ *
+ * 📌 Long base64-ish runs are exactly what private keys, JWTs, and API tokens
+ * look like — so we blank every run of 24+ token characters and any PEM block
+ * outright. What survives is the prose part of the message, which is the part
+ * that actually names the problem.
+ */
+function redact(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return message
+    .replace(/-----BEGIN[\s\S]*?-----/g, "[PEM]")
+    .replace(/[A-Za-z0-9+/=_.-]{24,}/g, "[REDACTED]")
+    .slice(0, 300)
 }
 
 export async function GET() {
@@ -60,6 +85,7 @@ export async function GET() {
   // taking this route down the same way it took the upload route down.
   let adminInit = "ok"
   let reason: string | undefined
+  let detail: string | undefined
   try {
     const { adminAuth } = await import("@/lib/firebase/admin")
     // Touch it so a lazily-thrown credential error surfaces now.
@@ -67,7 +93,19 @@ export async function GET() {
   } catch (error) {
     adminInit = "failed"
     reason = classify(error)
+    detail = redact(error)
   }
 
-  return NextResponse.json({ env, keyShape, adminInit, reason })
+  // Which service account the credentials CLAIM to be. The local part of an
+  // email address is not a secret, and matching it against the Firebase console
+  // is the fastest way to spot a stale key from a previous rotation.
+  const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL ?? ""
+  const identity = {
+    projectIdMatchesPublic:
+      process.env.FIREBASE_ADMIN_PROJECT_ID ===
+      process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    clientEmailDomain: clientEmail.split("@")[1] ?? "",
+  }
+
+  return NextResponse.json({ env, keyShape, identity, adminInit, reason, detail })
 }
