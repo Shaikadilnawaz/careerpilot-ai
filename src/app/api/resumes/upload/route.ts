@@ -30,9 +30,14 @@ import { ACCEPTED_RESUME_TYPE, MAX_RESUME_BYTES } from "@/features/resumes/schem
 export const runtime = "nodejs"
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const body = (await request.json()) as HandleUploadBody
-
   try {
+    // 📌 This parse MUST be inside the try. It was outside originally, and an
+    // empty or malformed body threw before any error handling ran — surfacing
+    // as a 500 with Next's generic error page instead of our 400. A public
+    // endpoint receives junk requests as a matter of course; parsing input is
+    // one of the most likely things to throw, so it belongs inside the guard.
+    const body = (await request.json()) as HandleUploadBody
+
     const jsonResponse = await handleUpload({
       body,
       request,
@@ -95,9 +100,32 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(jsonResponse)
   } catch (error) {
     console.error("Blob upload authorization failed:", error)
-    // 400, not 500: the overwhelming majority of failures here are a bad or
-    // expired token, or a path that isn't the caller's. Never echo the real
-    // error message back — it can describe our internals to an attacker.
+
+    /**
+     * 📌 Separate "your request was bad" from "this server is broken".
+     *
+     * Collapsing both into one status is convenient until you deploy, and then
+     * you cannot tell a forged token from a missing environment variable
+     * without reading logs. 4xx means the caller did something wrong; 5xx means
+     * WE did. Getting that boundary right is what makes an endpoint debuggable
+     * from the outside — and it still leaks nothing, because the message stays
+     * generic either way.
+     */
+    const message = error instanceof Error ? error.message : ""
+    const isMisconfigured =
+      /private key|credential|BLOB_READ_WRITE_TOKEN|no blob credentials|failed to parse/i.test(
+        message
+      )
+
+    if (isMisconfigured) {
+      return NextResponse.json(
+        { error: "Storage is not configured correctly." },
+        { status: 503 }
+      )
+    }
+
+    // The common case: a bad or expired token, or a path that isn't the
+    // caller's. Never echo the real error text — it describes our internals.
     return NextResponse.json(
       { error: "Upload was not authorized." },
       { status: 400 }
