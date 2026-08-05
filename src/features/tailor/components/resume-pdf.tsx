@@ -1,115 +1,100 @@
 /**
- * ResumeDocument — the PDF template.
+ * ResumeDocument — the single resume template, modelled on the "Jake's Resume"
+ * LaTeX layout that most engineering resumes use.
  *
  * 📌 THIS IS NOT A WEB COMPONENT, even though it looks like one.
+ * `@react-pdf/renderer` gives you React's programming model with a different
+ * renderer underneath:
+ *   - No Tailwind, no CSS files, no cascade. Styles come from StyleSheet.create
+ *     and attach to each element explicitly.
+ *   - Flexbox subset only. No grid, no float.
+ *   - <View>/<Text> instead of <div>/<span>. Every string MUST sit inside a
+ *     <Text> or it throws.
+ *   - Built-in fonts only unless you register one. Times-Roman is used here
+ *     because it is the closest built-in match to LaTeX's serif look, and it
+ *     needs no network fetch at render time.
  *
- * `@react-pdf/renderer` gives you React's programming model with an entirely
- * different renderer underneath. Consequences worth knowing:
- *   - No Tailwind, no CSS files, no cascade. Styles come from `StyleSheet.create`
- *     and must be attached to each element explicitly.
- *   - Only a flexbox subset is supported. No grid, no float, no position:sticky.
- *   - `<View>` and `<Text>` instead of `<div>` and `<span>`. Every piece of text
- *     MUST be inside a <Text> — a bare string in a <View> throws.
- *   - Helvetica/Times/Courier are built in. Anything else needs Font.register
- *     with a URL, which would fail offline and slow the first render.
- *
- * So this is a separate component tree from the on-screen UI, deliberately.
- * That's the price of generating a real PDF without shipping a headless browser.
- *
- * DESIGN INTENT: this layout is ATS-optimised on purpose — single column, real
- * selectable text, standard section headings, no tables, no columns, no icons,
- * no graphics. Those are exactly the things your Week 3 analyser scores.
+ * DESIGN INTENT: ATS-optimised by construction — one column, real selectable
+ * text, standard headings, no tables, no graphics, no icons. Exactly the things
+ * the Week 3 analyser scores.
  */
 import {
   Document,
   Page,
   Text,
   View,
+  Link,
   StyleSheet,
 } from "@react-pdf/renderer"
 
-import type { TailoredResume } from "../schema"
+import {
+  normalizeUrl,
+  EMPTY_LINKS,
+  type ProfileLinks,
+  type TailoredResume,
+} from "../schema"
 
 const styles = StyleSheet.create({
   page: {
-    paddingVertical: 36,
+    paddingTop: 34,
+    paddingBottom: 34,
     paddingHorizontal: 42,
-    fontFamily: "Helvetica",
+    fontFamily: "Times-Roman",
     fontSize: 10,
-    color: "#1a1a1a",
-    lineHeight: 1.4,
+    color: "#000000",
+    lineHeight: 1.35,
   },
-  /**
-   * 📌 Set lineHeight explicitly on large text.
-   *
-   * The page sets lineHeight 1.4, and every child inherits it — but react-pdf
-   * lays text out by BASELINE, so a 20pt name in a 1.4 box can sit low enough
-   * that the next line crowds it. Pinning lineHeight and adding real margin
-   * makes the header spacing predictable instead of a side effect of inherited
-   * values. There's no CSS cascade to save you here.
-   */
+
+  // ---- header (centred, like the template) --------------------------------
+  header: { alignItems: "center", marginBottom: 10 },
   name: {
-    fontSize: 20,
-    fontFamily: "Helvetica-Bold",
+    fontSize: 22,
+    fontFamily: "Times-Bold",
     lineHeight: 1.2,
-    marginBottom: 4,
-  },
-  headline: {
-    fontSize: 11,
-    color: "#444444",
-    lineHeight: 1.3,
-    marginBottom: 5,
-  },
-  contact: {
-    fontSize: 9,
-    color: "#555555",
-    lineHeight: 1.3,
-  },
-  sectionTitle: {
-    fontSize: 10,
-    fontFamily: "Helvetica-Bold",
-    // Uppercase headings are one of the most reliably parsed ATS conventions.
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-    marginTop: 14,
-    marginBottom: 5,
-    paddingBottom: 2,
-    borderBottomWidth: 0.75,
-    borderBottomColor: "#cccccc",
-  },
-  summary: {
     marginBottom: 2,
   },
-  entryHeader: {
+  headerLine: { fontSize: 9.5, lineHeight: 1.35 },
+  headerLinkRow: { flexDirection: "row", marginTop: 1 },
+  link: { fontSize: 9.5, color: "#0645ad", textDecoration: "underline" },
+  sep: { fontSize: 9.5, marginHorizontal: 4 },
+
+  // ---- section heading + rule ---------------------------------------------
+  sectionTitle: {
+    fontSize: 11,
+    fontFamily: "Times-Bold",
+    // The template uses small caps; react-pdf has none, so uppercase with
+    // letter-spacing is the closest honest approximation.
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginTop: 10,
+    marginBottom: 3,
+    paddingBottom: 1.5,
+    borderBottomWidth: 0.7,
+    borderBottomColor: "#000000",
+  },
+
+  // ---- generic two-column row (content left, date right) ------------------
+  row: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginTop: 7,
+    alignItems: "flex-start",
   },
-  entryTitle: {
-    fontFamily: "Helvetica-Bold",
-  },
-  entryMeta: {
-    color: "#555555",
-    fontSize: 9,
-  },
-  entrySub: {
-    color: "#444444",
-    marginBottom: 2,
-  },
-  bulletRow: {
-    flexDirection: "row",
-    marginTop: 2,
-    paddingRight: 4,
-  },
-  bulletMark: {
-    width: 10,
-  },
-  bulletText: {
-    flex: 1,
-  },
+  rowLeft: { flex: 1, paddingRight: 10 },
+  rowRight: { fontSize: 9.5 },
+
+  bold: { fontFamily: "Times-Bold" },
+  italic: { fontFamily: "Times-Italic" },
+
+  entry: { marginTop: 5 },
+
+  bulletRow: { flexDirection: "row", marginTop: 1.5, paddingLeft: 8 },
+  bulletMark: { width: 9 },
+  bulletText: { flex: 1 },
+
+  skillLine: { marginTop: 1.5 },
+  paragraph: { marginTop: 1 },
 })
 
-/** One "• text" line. A row + flex:1 is how you get hanging indents here. */
 function Bullet({ children }: { children: string }) {
   return (
     <View style={styles.bulletRow}>
@@ -119,7 +104,40 @@ function Bullet({ children }: { children: string }) {
   )
 }
 
-export function ResumeDocument({ data }: { data: TailoredResume }) {
+function Section({
+  title,
+  children,
+}: {
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <View>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {children}
+    </View>
+  )
+}
+
+export function ResumeDocument({
+  data,
+  links = EMPTY_LINKS,
+}: {
+  data: TailoredResume
+  links?: ProfileLinks
+}) {
+  // Only render what the user filled in — building the list first keeps the
+  // separator logic simple, with no dangling "|" after the last item.
+  const profileLinks = (
+    [
+      { label: "GitHub", value: links.github },
+      { label: "LinkedIn", value: links.linkedin },
+      { label: "Portfolio", value: links.portfolio },
+    ] as const
+  )
+    .filter((entry) => entry.value.trim().length > 0)
+    .map((entry) => ({ label: entry.label, href: normalizeUrl(entry.value) }))
+
   return (
     <Document
       title={`${data.fullName} - Resume`}
@@ -127,85 +145,134 @@ export function ResumeDocument({ data }: { data: TailoredResume }) {
       creator="CareerPilot AI"
     >
       <Page size="A4" style={styles.page}>
-        <View>
+        {/* ---------------- header ---------------- */}
+        <View style={styles.header}>
           <Text style={styles.name}>{data.fullName}</Text>
-          {data.headline ? (
-            <Text style={styles.headline}>{data.headline}</Text>
+          {data.location ? (
+            <Text style={styles.headerLine}>{data.location}</Text>
           ) : null}
           {data.contact ? (
-            <Text style={styles.contact}>{data.contact}</Text>
+            <Text style={styles.headerLine}>{data.contact}</Text>
+          ) : null}
+
+          {/* Anchor-style: the visible text is the WORD, and <Link src> attaches
+              the URL as a clickable PDF annotation — same as <a href>GitHub</a>. */}
+          {profileLinks.length > 0 ? (
+            <View style={styles.headerLinkRow}>
+              {profileLinks.map((entry, i) => (
+                <View key={entry.label} style={{ flexDirection: "row" }}>
+                  {i > 0 ? <Text style={styles.sep}>|</Text> : null}
+                  <Link src={entry.href} style={styles.link}>
+                    {entry.label}
+                  </Link>
+                </View>
+              ))}
+            </View>
           ) : null}
         </View>
 
+        {/* ---------------- summary ---------------- */}
         {data.summary ? (
-          <>
-            <Text style={styles.sectionTitle}>Summary</Text>
-            <Text style={styles.summary}>{data.summary}</Text>
-          </>
+          <Section title="Professional Summary">
+            <Text style={styles.paragraph}>{data.summary}</Text>
+          </Section>
         ) : null}
 
-        {data.experience.length > 0 ? (
-          <>
-            <Text style={styles.sectionTitle}>Experience</Text>
-            {data.experience.map((job, i) => (
-              <View key={i} wrap={false}>
-                <View style={styles.entryHeader}>
-                  <Text style={styles.entryTitle}>{job.role}</Text>
-                  <Text style={styles.entryMeta}>{job.period}</Text>
+        {/* ---------------- education ---------------- */}
+        {data.education.length > 0 ? (
+          <Section title="Education">
+            {data.education.map((item, i) => (
+              <View key={i} style={styles.entry} wrap={false}>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, styles.bold]}>
+                    {item.institution}
+                  </Text>
+                  <Text style={styles.rowRight}>{item.period}</Text>
                 </View>
-                <Text style={styles.entrySub}>{job.company}</Text>
+                <View style={styles.row}>
+                  <Text style={styles.rowLeft}>{item.qualification}</Text>
+                  {item.detail ? (
+                    <Text style={styles.rowRight}>{item.detail}</Text>
+                  ) : null}
+                </View>
+              </View>
+            ))}
+          </Section>
+        ) : null}
+
+        {/* ---------------- experience (only when there is any) ------------- */}
+        {data.experience.length > 0 ? (
+          <Section title="Experience">
+            {data.experience.map((job, i) => (
+              <View key={i} style={styles.entry} wrap={false}>
+                <View style={styles.row}>
+                  <Text style={[styles.rowLeft, styles.bold]}>{job.role}</Text>
+                  <Text style={styles.rowRight}>{job.period}</Text>
+                </View>
+                <Text style={styles.italic}>{job.company}</Text>
                 {job.bullets.map((bullet, j) => (
                   <Bullet key={j}>{bullet}</Bullet>
                 ))}
               </View>
             ))}
-          </>
+          </Section>
         ) : null}
 
+        {/* ---------------- technical skills ---------------- */}
+        {data.skillCategories.length > 0 ? (
+          <Section title="Technical Skills">
+            {data.skillCategories.map((group, i) => (
+              <Text key={i} style={styles.skillLine}>
+                <Text style={styles.bold}>{group.category}: </Text>
+                {group.items.join(", ")}
+              </Text>
+            ))}
+          </Section>
+        ) : null}
+
+        {/* ---------------- projects ---------------- */}
         {data.projects.length > 0 ? (
-          <>
-            <Text style={styles.sectionTitle}>Projects</Text>
+          <Section title="Projects">
             {data.projects.map((project, i) => (
-              // wrap={false} keeps an entry from being split across pages.
-              <View key={i} wrap={false}>
-                <View style={styles.entryHeader}>
-                  <Text style={styles.entryTitle}>{project.name}</Text>
+              // wrap={false} stops an entry being split across two pages.
+              <View key={i} style={styles.entry} wrap={false}>
+                <View style={styles.row}>
+                  <Text style={styles.rowLeft}>
+                    <Text style={styles.bold}>{project.name}</Text>
+                    {project.tech ? (
+                      <Text style={styles.italic}> — {project.tech}</Text>
+                    ) : null}
+                  </Text>
+                  {project.link ? (
+                    <Link src={normalizeUrl(project.link)} style={styles.link}>
+                      Live Demo
+                    </Link>
+                  ) : null}
                 </View>
-                {project.tech ? (
-                  <Text style={styles.entrySub}>{project.tech}</Text>
-                ) : null}
                 {project.bullets.map((bullet, j) => (
                   <Bullet key={j}>{bullet}</Bullet>
                 ))}
               </View>
             ))}
-          </>
+          </Section>
         ) : null}
 
-        {data.skills.length > 0 ? (
-          <>
-            <Text style={styles.sectionTitle}>Skills</Text>
-            {/* A plain comma-separated line, NOT a multi-column grid — ATS
-                parsers routinely mangle columns into unreadable word soup. */}
-            <Text>{data.skills.join(", ")}</Text>
-          </>
-        ) : null}
-
-        {data.education.length > 0 ? (
-          <>
-            <Text style={styles.sectionTitle}>Education</Text>
-            {data.education.map((item, i) => (
-              <View key={i}>
-                <View style={styles.entryHeader}>
-                  <Text style={styles.entryTitle}>{item.qualification}</Text>
-                  <Text style={styles.entryMeta}>{item.period}</Text>
-                </View>
-                {item.institution ? (
-                  <Text style={styles.entrySub}>{item.institution}</Text>
-                ) : null}
-              </View>
+        {/* ---------------- certifications ---------------- */}
+        {data.certifications.length > 0 ? (
+          <Section title="Certifications">
+            {data.certifications.map((item, i) => (
+              <Bullet key={i}>{item}</Bullet>
             ))}
-          </>
+          </Section>
+        ) : null}
+
+        {/* ---------------- achievements ---------------- */}
+        {data.achievements.length > 0 ? (
+          <Section title="Achievements">
+            {data.achievements.map((item, i) => (
+              <Bullet key={i}>{item}</Bullet>
+            ))}
+          </Section>
         ) : null}
       </Page>
     </Document>

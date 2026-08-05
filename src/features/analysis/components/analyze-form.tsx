@@ -47,7 +47,11 @@ import { subscribeToResumes } from "@/features/resumes/services/resume-service"
 import { tailorResume } from "@/features/tailor/actions/tailor-resume"
 import { recheckDraft } from "@/features/tailor/actions/recheck-draft"
 import { TailoredResumeEditor } from "@/features/tailor/components/tailored-resume-editor"
-import type { TailoredResume } from "@/features/tailor/schema"
+import {
+  EMPTY_LINKS,
+  type ProfileLinks,
+  type TailoredResume,
+} from "@/features/tailor/schema"
 import { writeCoverLetter } from "@/features/cover-letter/actions/write-cover-letter"
 import { CoverLetterEditor } from "@/features/cover-letter/components/cover-letter-editor"
 import type { CoverLetterHeader } from "@/features/cover-letter/schema"
@@ -89,6 +93,11 @@ export function AnalyzeForm() {
 
   const [result, setResult] = React.useState<Result | null>(null)
   const [draft, setDraft] = React.useState<TailoredResume | null>(null)
+
+  // Profile links. Collected in a panel that opens when you click Tailor, all
+  // optional, and never sent to the model — see tailor/schema.ts for why.
+  const [links, setLinks] = React.useState<ProfileLinks>(EMPTY_LINKS)
+  const [linksPanelOpen, setLinksPanelOpen] = React.useState(false)
   const [recheck, setRecheck] = React.useState<Result | null>(null)
 
   // Cover letter: company and role are typed by the user rather than extracted
@@ -163,7 +172,13 @@ export function AnalyzeForm() {
     })
   }
 
+  /** Clicking "Tailor" opens the links panel first rather than running. */
+  function openLinksPanel() {
+    setLinksPanelOpen(true)
+  }
+
   function handleTailor() {
+    setLinksPanelOpen(false)
     run("tailor", async (idToken) => {
       const response = await tailorResume({
         idToken,
@@ -374,7 +389,7 @@ export function AnalyzeForm() {
 
             <Button
               variant="outline"
-              onClick={handleTailor}
+              onClick={openLinksPanel}
               disabled={isPending || !canTailor}
               // A disabled button with no explanation is a dead end.
               title={
@@ -413,6 +428,65 @@ export function AnalyzeForm() {
               </span>
             )}
           </div>
+
+          {/* Opens on "Tailor my resume". Every field is optional — the point
+              is to offer, not to gate. "Skip" and "Start tailoring" both
+              proceed; the only difference is whether links end up in the PDF. */}
+          {linksPanelOpen && !isPending && (
+            <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-4">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-sm font-medium">
+                  Add your profile links
+                </span>
+                <span className="text-muted-foreground text-xs">
+                  All optional. These become clickable links in your PDF — leave
+                  any blank to omit it.
+                </span>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                {(
+                  [
+                    ["github", "GitHub", "github.com/you"],
+                    ["linkedin", "LinkedIn", "linkedin.com/in/you"],
+                    ["portfolio", "Portfolio", "yoursite.com"],
+                  ] as const
+                ).map(([key, label, placeholder]) => (
+                  <div key={key} className="flex flex-col gap-1.5">
+                    <Label htmlFor={`link-${key}`}>{label}</Label>
+                    <Input
+                      id={`link-${key}`}
+                      value={links[key]}
+                      onChange={(e) =>
+                        setLinks((current) => ({
+                          ...current,
+                          [key]: e.target.value,
+                        }))
+                      }
+                      placeholder={placeholder}
+                      className="h-9"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button onClick={handleTailor}>
+                  <Wand2 className="size-4" />
+                  Start tailoring
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setLinks(EMPTY_LINKS)
+                    handleTailor()
+                  }}
+                >
+                  Skip
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -421,9 +495,9 @@ export function AnalyzeForm() {
           <AnalysisResult result={result} />
 
           {/* The natural next click after seeing what's wrong. */}
-          {canTailor && !draft && (
+          {canTailor && !draft && !linksPanelOpen && (
             <Button
-              onClick={handleTailor}
+              onClick={openLinksPanel}
               disabled={isPending}
               className="self-start"
             >
@@ -444,6 +518,8 @@ export function AnalyzeForm() {
           <TailoredResumeEditor
             draft={draft}
             onChange={setDraft}
+            links={links}
+            onLinksChange={setLinks}
             extraActions={
               <Button
                 variant="outline"

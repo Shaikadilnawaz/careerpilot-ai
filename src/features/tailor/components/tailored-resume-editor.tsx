@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 
-import type { TailoredResume } from "../schema"
+import { EMPTY_LINKS, type ProfileLinks, type TailoredResume } from "../schema"
 
 /** A block of editable bullets. Used for both experience and projects. */
 function BulletEditor({
@@ -56,10 +56,15 @@ function BulletEditor({
 export function TailoredResumeEditor({
   draft,
   onChange,
+  links = EMPTY_LINKS,
+  onLinksChange,
   extraActions,
 }: {
   draft: TailoredResume
   onChange: (next: TailoredResume) => void
+  /** User-supplied profile URLs. Never AI-generated — see schema.ts. */
+  links?: ProfileLinks
+  onLinksChange?: (next: ProfileLinks) => void
   /** Rendered next to Download — used for "Re-check score". */
   extraActions?: React.ReactNode
 }) {
@@ -82,7 +87,9 @@ export function TailoredResumeEditor({
         import("./resume-pdf"),
       ])
 
-      const blob = await pdf(<ResumeDocument data={draft} />).toBlob()
+      const blob = await pdf(
+        <ResumeDocument data={draft} links={links} />
+      ).toBlob()
 
       // Browsers can't save a Blob directly — point a temporary <a> at an
       // object URL and click it programmatically.
@@ -155,25 +162,52 @@ export function TailoredResumeEditor({
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="t-headline">Headline</Label>
+              <Label htmlFor="t-location">Location</Label>
               <Input
-                id="t-headline"
-                value={draft.headline}
-                onChange={(e) => patch({ headline: e.target.value })}
+                id="t-location"
+                value={draft.location}
+                onChange={(e) => patch({ location: e.target.value })}
+                placeholder="Kurnool, Andhra Pradesh"
                 className="h-9"
               />
             </div>
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="t-contact">Contact line</Label>
+            <Label htmlFor="t-contact">Phone &amp; email</Label>
             <Input
               id="t-contact"
               value={draft.contact}
               onChange={(e) => patch({ contact: e.target.value })}
+              placeholder="+91-9876543210 | you@email.com"
               className="h-9"
             />
           </div>
+
+          {onLinksChange && (
+            <div className="grid gap-3 sm:grid-cols-3">
+              {(
+                [
+                  ["github", "GitHub", "github.com/you"],
+                  ["linkedin", "LinkedIn", "linkedin.com/in/you"],
+                  ["portfolio", "Portfolio", "yoursite.com"],
+                ] as const
+              ).map(([key, label, placeholder]) => (
+                <div key={key} className="flex flex-col gap-1.5">
+                  <Label htmlFor={`t-${key}`}>{label}</Label>
+                  <Input
+                    id={`t-${key}`}
+                    value={links[key]}
+                    onChange={(e) =>
+                      onLinksChange({ ...links, [key]: e.target.value })
+                    }
+                    placeholder={placeholder}
+                    className="h-9"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="t-summary">Summary</Label>
@@ -241,22 +275,71 @@ export function TailoredResumeEditor({
 
           <Separator />
 
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="t-skills">Skills (comma separated)</Label>
-            <Textarea
-              id="t-skills"
-              value={draft.skills.join(", ")}
-              onChange={(e) =>
-                patch({
-                  skills: e.target.value
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter(Boolean),
-                })
-              }
-              className="min-h-16"
-            />
+          <div className="flex flex-col gap-3">
+            <span className="text-sm font-medium">Technical skills</span>
+            {draft.skillCategories.map((group, i) => (
+              <div key={i} className="flex flex-col gap-1.5">
+                <Label htmlFor={`t-skills-${i}`}>{group.category}</Label>
+                <Textarea
+                  id={`t-skills-${i}`}
+                  value={group.items.join(", ")}
+                  onChange={(e) => {
+                    const next = [...draft.skillCategories]
+                    next[i] = {
+                      ...next[i],
+                      items: e.target.value
+                        .split(",")
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    }
+                    patch({ skillCategories: next })
+                  }}
+                  className="min-h-12 text-sm"
+                />
+              </div>
+            ))}
           </div>
+
+          {draft.certifications.length > 0 && (
+            <>
+              <Separator />
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="t-certs">Certifications (one per line)</Label>
+                <Textarea
+                  id="t-certs"
+                  value={draft.certifications.join("\n")}
+                  onChange={(e) =>
+                    patch({
+                      certifications: e.target.value
+                        .split("\n")
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                  className="min-h-16 text-sm"
+                />
+              </div>
+            </>
+          )}
+
+          {draft.achievements.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="t-achievements">Achievements (one per line)</Label>
+              <Textarea
+                id="t-achievements"
+                value={draft.achievements.join("\n")}
+                onChange={(e) =>
+                  patch({
+                    achievements: e.target.value
+                      .split("\n")
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                  })
+                }
+                className="min-h-16 text-sm"
+              />
+            </div>
+          )}
 
           <p className="text-muted-foreground text-xs">
             Everything here is an AI draft. Check every line against what you
